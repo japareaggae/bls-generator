@@ -1,0 +1,139 @@
+#!/bin/bash
+# bls-generator: Generates Boot Loader Specification entry files
+# For more information on BLS, see the systemd-boot documentation:
+# <https://github.com/systemd/systemd/blob/master/docs/BOOT_LOADER_SPECIFICATION.md>
+#
+# Copyright (c) 2014-2018 Renan Guilherme Lebre Ramos <japareaggae@gmail.com>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+# Some quick notes before using this script:
+# * You are advised to use "-o rw" if you're running on a default mkinitcpio
+#   configuration. If you're using the systemd hook, use "-o ro" instead.
+#   <https://bbs.archlinux.org/viewtopic.php?pid=1303683#p1303683>
+
+### Usage
+_usage(){
+cat << EOF
+Usage: ${0##*/} [options] [suffix]
+Generates a Boot Loader Specification entry file for Arch Linux.
+
+By default, generates a configuration for the default kernel (ARCH).
+This can be changed by specifying a suffix (ck, lts, grsec...)
+
+Options:
+  -d | --device <device>    Use a different device for "root=" option (sda1, sda2...)
+                            (this will be converted into a UUID/PARTUUID)
+  -o | --options <options>  Append extra options on the "options" line
+  -p | --partuuid           Use PARTUUID instead of UUID
+  -h | --help               Show this help text
+
+For more information on BLS, see the systemd-boot documentation:
+<https://github.com/systemd/systemd/blob/master/docs/BOOT_LOADER_SPECIFICATION.md>
+
+EOF
+}
+
+### Options
+USEPARTUUID=0
+
+### Generate configuration file
+_buildconfig(){
+
+	# If no suffix was supplied, default to -ARCH kernel
+	if [[ -z $SUFFIX ]]; then
+		DESC="core repo"
+	else
+		DESC=$SUFFIX
+		SUFFIX="-$SUFFIX"
+	fi
+
+
+	# Get our root device.
+	if [[ $DEVICE ]]; then
+		# Test if the specified device is valid.
+		if ! [[ -b /dev/$DEVICE ]]; then
+			echo "Error: /dev/$DEVICE is not a valid block device."
+			exit 1
+		fi
+
+		# If device is valid, use it as root.
+		if [[ $USEPARTUUID -eq 1 ]]; then
+			ROOT="PARTUUID=$(lsblk -lo name,partuuid | grep $DEVICE | awk '{print $2}')"
+		else
+			ROOT="UUID=$(lsblk -lo name,uuid | grep $DEVICE | awk '{print $2}')"
+		fi
+	else
+		# If no device is specified, use whatever is mounted at /mnt.
+		# This should always work if you're following the Installation Guide.
+		GUESS="$(lsblk -lo name,mountpoint | grep '/mnt$' | awk '{print $1}')"
+		if [[ $USEPARTUUID -eq 1 ]]; then
+			ROOT="PARTUUID=$(lsblk -o partuuid,mountpoint | grep '/mnt$' | awk '{print $1}')"
+		else
+			ROOT="UUID=$(lsblk -o uuid,mountpoint | grep '/mnt$' | awk '{print $1}')"
+		fi
+		cat << EOF
+# No device specified - assuming $GUESS is the root device
+EOF
+	fi
+
+	# If no extra options specified, default to rw and show warning
+	if [[ -z $EXTRAOPTS ]]; then
+		EXTRAOPTS="rw"
+		cat << EOF
+# No extra options specified - assuming default mkinitcpio options
+EOF
+	fi
+
+	# Write configuration file
+	cat << EOF
+title    Arch Linux
+version  $DESC kernel
+linux    /vmlinuz-linux${SUFFIX}
+initrd   /initramfs-linux${SUFFIX}.img
+options  root=${ROOT} ${EXTRAOPTS}
+EOF
+}
+
+### Option parsing loop
+while [ "$1" ]; do
+	case "$1" in
+		"-d" | "--device")
+			shift
+			DEVICE="$1"
+			;;
+		"-h" | "--help")
+			_usage
+			exit
+			;;
+		"-p" | "--partuuid")
+			USEPARTUUID=1 ;;
+		"-o" | "--options")
+			shift
+			EXTRAOPTS="$1"
+			;;
+		*)
+			SUFFIX="$1" ;;
+	esac
+
+	shift
+done
+
+# Build it!
+_buildconfig
