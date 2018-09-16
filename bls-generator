@@ -126,6 +126,7 @@ while [ "$1" ]; do
 			USEPARTUUID=1 ;;
 		"-o" | "--options")
 			shift
+			# FIXME: Using $1 only lets you add one extra option
 			EXTRAOPTS="$1"
 			;;
 		*)
